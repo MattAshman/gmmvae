@@ -39,7 +39,6 @@ class VAE(nn.Module):
 
         # z_samples is shape (num_samples, batch, z_dim).
         z_samples = qz.rsample((num_samples,))
-        # z_samples = qz_mu + qz_sigma * torch.randn(num_samples, *qz_mu.shape)
 
         log_px_z = 0
         for z in z_samples:
@@ -90,7 +89,6 @@ class EntroVAE(VAE):
 
         # z_samples is shape (num_samples, batch, z_dim).
         z_samples = qz.rsample((num_samples,))
-        # z_samples = qz_mu + qz_sigma * torch.randn(num_samples, *qz_mu.shape)
 
         log_px_z = 0
         for z in z_samples:
