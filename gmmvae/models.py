@@ -102,7 +102,7 @@ class EntroVAE(VAE):
 
 class GMMVAE(nn.Module):
 
-    def __init__(self, encoder, loglikelihood, z_dim, k):
+    def __init__(self, encoder, loglikelihood, z_dim, k, init_sigma=1.):
         super().__init__()
 
         self.encoder = encoder
@@ -111,10 +111,10 @@ class GMMVAE(nn.Module):
         self.k = k
 
         # Initialise GMM parameters.
-        self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)),
+        self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)) * 0.1,
                                     requires_grad=True)
-        self.pz_y_logsigma = nn.Parameter(torch.zeros((k, z_dim)),
-                                          requires_grad=True)
+        self.pz_y_logsigma = nn.Parameter(
+            (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
 
     def qz(self, x):
         qz_mu, qz_sigma = self.encoder(x)
@@ -155,9 +155,8 @@ class GMMVAE(nn.Module):
             kl_y += kl_divergence(py_z, Categorical(pi)).sum()
 
             for k in range(self.k):
-                pz_y = Normal(
-                    self.pz_y_mu[k, :].repeat(x.shape[0], 1),
-                    self.pz_y_logsigma[k, :].exp().repeat(x.shape[0], 1))
+                pz_y = Normal(self.pz_y_mu[k, :],
+                              self.pz_y_logsigma[k, :].exp())
 
                 kl_z_k = py_z.probs[:, k] * kl_divergence(qz, pz_y).sum(1)
                 kl_z += kl_z_k.sum()
