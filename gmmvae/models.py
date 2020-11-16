@@ -214,9 +214,11 @@ class GMMVAEFixedCls(nn.Module):
         self.pz_y_logsigma = nn.Parameter(
             (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
 
-    def qy(self, x):
-        output = self.cls(x).detach()
-        qy = Categorical(output.exp())
+    def qy(self, x, cls_output=None):
+        if cls_output is None:
+            cls_output = self.cls(x).detach()
+
+        qy = Categorical(cls_output.exp())
 
         return qy
 
@@ -226,13 +228,14 @@ class GMMVAEFixedCls(nn.Module):
 
         return qz
 
-    def elbo(self, x, pi=None, num_samples=1):
+    def elbo(self, x, cls_output=None, pi=None, num_samples=1):
         """Monte Carlo estimate of the evidence lower bound."""
-        qy = self.qy(x)
+        qy = self.qy(x, cls_output)
+        x = x.flatten(start_dim=1)
 
         log_px_z = 0
         for _ in range(num_samples):
-            y = qy.rsample()
+            y = qy.sample()
             qz = self.qz(x, y)
             z = qz.rsample()
             log_px_z += self.loglikelihood(z, x).sum()
@@ -277,9 +280,11 @@ class GMMVAECls(nn.Module):
         self.pz_y_logsigma = nn.Parameter(
             (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
 
-    def qy(self, x):
-        output = self.cls(x).detach()
-        qy = Categorical(output.exp())
+    def qy(self, x, cls_output=None):
+        if cls_output is None:
+            cls_output = self.cls(x).detach()
+
+        qy = Categorical(cls_output.exp())
 
         return qy
 
@@ -289,13 +294,14 @@ class GMMVAECls(nn.Module):
 
         return qz
 
-    def elbo(self, x, pi=None, num_samples=1):
+    def elbo(self, x, cls_output=None, pi=None, num_samples=1):
         """Monte Carlo estimate of the evidence lower bound."""
-        qy = self.qy(x)
+        qy = self.qy(x, cls_output)
+        x = x.flatten(start_dim=1)
 
         log_px_z = 0
         for _ in range(num_samples):
-            y = qy.rsample()
+            y = qy.sample()
             qz = self.qz(x, y)
             z = qz.rsample()
             log_px_z += self.loglikelihood(z, x).sum()

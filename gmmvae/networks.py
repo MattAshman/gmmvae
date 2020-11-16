@@ -96,7 +96,7 @@ class LinearGaussianIndexed(nn.Module):
         """Returns parameters of a diagonal Gaussian distribution."""
         output = torch.zeros((x.shape[0], 2*self.out_dim))
         for k in range(self.k):
-            idx = torch.where(y == k)
+            idx = torch.where(y == k)[0]
             output[idx] = self.networks[k](x[idx, :])
 
         mu = output[..., :self.out_dim]
