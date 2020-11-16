@@ -195,3 +195,133 @@ class GMMVAE(nn.Module):
         x_recon = self.loglikelihood.predict(z)
 
         return x_recon
+
+
+class GMMVAE2FixedCls(nn.Module):
+
+    def __init__(self, cls, encoder, loglikelihood, z_dim, k, init_sigma=1.):
+        super().__init__()
+
+        self.cls = cls
+        self.encoder = encoder
+        self.loglikelihood = loglikelihood
+        self.z_dim = z_dim
+        self.k = k
+
+        # Initialise GMM parameters.
+        self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)) * 0.1,
+                                    requires_grad=True)
+        self.pz_y_logsigma = nn.Parameter(
+            (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
+
+    def qy(self, x):
+        output = self.cls(x).detach()
+        qy = Categorical(output.exp())
+
+        return qy
+
+    def qz(self, x, y):
+        qz_mu, qz_sigma = self.encoder(x, y)
+        qz = Normal(qz_mu, qz_sigma)
+
+        return qz
+
+    def elbo(self, x, pi=None, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        qy = self.qy(x)
+
+        log_px_z = 0
+        for _ in range(num_samples):
+            y = qy.rsample()
+            qz = self.qz(x, y)
+            z = qz.rsample()
+            log_px_z += self.loglikelihood(z, x).sum()
+
+        log_px_z /= num_samples
+
+        if pi is None:
+            pi = torch.ones(self.k) / self.k
+
+        py = Categorical(pi)
+        kl_y = kl_divergence(qy, py).sum()
+
+        kl_z = 0
+        for k in range(self.k):
+            pz_y = Normal(self.pz_y_mu[k, :],
+                          self.pz_y_logsigma[k, :].exp())
+            qz = self.qz(x, torch.ones(x.shape[0]).fill_(k))
+
+            kl_z_k = qy.probs[:, k] * kl_divergence(qz, pz_y).sum(1)
+            kl_z += kl_z_k.sum()
+
+        elbo = (log_px_z - kl_y - kl_z) / x.shape[0]
+
+        return elbo
+
+
+class GMMVAE2(nn.Module):
+
+    def __init__(self, cls, encoder, loglikelihood, z_dim, k, init_sigma=1.):
+        super().__init__()
+
+        self.cls = cls
+        self.encoder = encoder
+        self.loglikelihood = loglikelihood
+        self.z_dim = z_dim
+        self.k = k
+        self.cls_nloglikelihood = nn.functional.nll_loss
+
+        # Initialise GMM parameters.
+        self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)) * 0.1,
+                                    requires_grad=True)
+        self.pz_y_logsigma = nn.Parameter(
+            (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
+
+    def qy(self, x):
+        output = self.cls(x).detach()
+        qy = Categorical(output.exp())
+
+        return qy
+
+    def qz(self, x, y):
+        qz_mu, qz_sigma = self.encoder(x, y)
+        qz = Normal(qz_mu, qz_sigma)
+
+        return qz
+
+    def elbo(self, x, pi=None, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        qy = self.qy(x)
+
+        log_px_z = 0
+        for _ in range(num_samples):
+            y = qy.rsample()
+            qz = self.qz(x, y)
+            z = qz.rsample()
+            log_px_z += self.loglikelihood(z, x).sum()
+
+        log_px_z /= num_samples
+
+        if pi is None:
+            pi = torch.ones(self.k) / self.k
+
+        py = Categorical(pi)
+        kl_y = kl_divergence(qy, py).sum()
+
+        kl_z = 0
+        for k in range(self.k):
+            pz_y = Normal(self.pz_y_mu[k, :],
+                          self.pz_y_logsigma[k, :].exp())
+            qz = self.qz(x, torch.ones(x.shape[0]).fill_(k))
+
+            kl_z_k = qy.probs[:, k] * kl_divergence(qz, pz_y).sum(1)
+            kl_z += kl_z_k.sum()
+
+        elbo = (log_px_z - kl_y - kl_z) / x.shape[0]
+
+        return elbo
+
+    def cls_nll(self, x, y):
+        output = self.cls(x)
+
+        return self.cls_nloglikelihood(output, y), output
