@@ -102,11 +102,11 @@ class EntroVAE(VAE):
 
 class GMMVAE(nn.Module):
 
-    def __init__(self, encoder, loglikelihood, z_dim, k, init_sigma=1.):
+    def __init__(self, loglikelihood, encoder, z_dim, k, init_sigma=1.):
         super().__init__()
 
-        self.encoder = encoder
         self.loglikelihood = loglikelihood
+        self.encoder = encoder
         self.z_dim = z_dim
         self.k = k
 
@@ -197,14 +197,14 @@ class GMMVAE(nn.Module):
         return x_recon
 
 
-class GMMVAE2FixedCls(nn.Module):
+class GMMVAEFixedCls(nn.Module):
 
-    def __init__(self, cls, encoder, loglikelihood, z_dim, k, init_sigma=1.):
+    def __init__(self, loglikelihood, cls, encoder, z_dim, k, init_sigma=1.):
         super().__init__()
 
+        self.loglikelihood = loglikelihood
         self.cls = cls
         self.encoder = encoder
-        self.loglikelihood = loglikelihood
         self.z_dim = z_dim
         self.k = k
 
@@ -259,14 +259,14 @@ class GMMVAE2FixedCls(nn.Module):
         return elbo
 
 
-class GMMVAE2(nn.Module):
+class GMMVAECls(nn.Module):
 
-    def __init__(self, cls, encoder, loglikelihood, z_dim, k, init_sigma=1.):
+    def __init__(self, loglikelihood, cls, encoder, z_dim, k, init_sigma=1.):
         super().__init__()
 
+        self.loglikelihood = loglikelihood
         self.cls = cls
         self.encoder = encoder
-        self.loglikelihood = loglikelihood
         self.z_dim = z_dim
         self.k = k
         self.cls_nloglikelihood = nn.functional.nll_loss
@@ -325,3 +325,14 @@ class GMMVAE2(nn.Module):
         output = self.cls(x)
 
         return self.cls_nloglikelihood(output, y), output
+
+
+class InfiniteGMMVAE(nn.Module):
+
+    def __init__(self, loglikelihood, encoder_z, encoder_w, z_dim, w_dim, k):
+        super().__init__()
+
+        self.loglikelihood = loglikelihood
+        self.encoder_z = encoder_z
+        self.encoder_w
+
