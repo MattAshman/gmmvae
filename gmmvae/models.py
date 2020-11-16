@@ -329,10 +329,108 @@ class GMMVAECls(nn.Module):
 
 class InfiniteGMMVAE(nn.Module):
 
-    def __init__(self, loglikelihood, encoder_z, encoder_w, z_dim, w_dim, k):
+    def __init__(self, loglikelihood, decoder_z, encoder_z, encoder_w, z_dim,
+                 w_dim, k):
         super().__init__()
 
-        self.loglikelihood = loglikelihood
+        self.loglikelhood = loglikelihood
+        self.decoder_z = decoder_z
         self.encoder_z = encoder_z
-        self.encoder_w
+        self.encoder_w = encoder_w
+        self.z_dim = z_dim
+        self.w_dim = w_dim
+        self.k = k
 
+    def pw(self):
+        pw_mu = torch.zeros(self.w_dim)
+        pw_sigma = torch.ones(self.w_dim)
+        pw = Normal(pw_mu, pw_sigma)
+
+        return pw
+
+    def qz(self, x):
+        qz_mu, qz_sigma = self.encoder_z(x)
+        qz = Normal(qz_mu, qz_sigma)
+
+        return qz
+
+    def qw(self, x):
+        qw_mu, qw_sigma = self.encoder_w(x)
+        qw = Normal(qw_mu, qw_sigma)
+
+        return qw
+
+    def py_wz(self, z, w, pi):
+        # Compute the marginal likelihood, p(z|w) = \sum_k p(z|w,y)p(y).
+        pzy_w = torch.zeros_like(pi)
+        for k in range(self.k):
+            pz_wy_mu, pz_wy_sigma = self.decoder_z(
+                w, torch.ones_like(w).fill_(k))
+            pz_wy = Normal(pz_wy_mu, pz_wy_sigma)
+            pzy_w[:, k] = pz_wy.log_prob(z).sum(1)
+            pzy_w[:, k] += pi[:, k].log()
+
+        pz_w = torch.logsumexp(pzy_w, dim=1)
+
+        # Compute the posterior p(y|z) = p(z, y) / p(z)
+        py_wz = pzy_w - pz_w.unsqueeze(1)
+        py_wz = Categorical(py_wz.exp())
+
+        return py_wz
+
+    def elbo(self, x, pi, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        qz = self.qz(x)
+        qw = self.qw(x)
+        pw = self.pw()
+
+        # z_samples is shape (num_samples, batch, z_dim).
+        z_samples = qz.rsample((num_samples,))
+        w_samples = qw.rsample((num_samples,))
+
+        log_px_z = 0
+        kl_y = 0
+        kl_z = 0
+        for z, w in zip(z_samples, w_samples):
+            log_px_z += self.loglikelihood(z, x).sum()
+
+            py_wz = self.py_wz(z, w, pi)
+            kl_y += kl_divergence(py_wz, Categorical(pi)).sum()
+
+            for k in range(self.k):
+                pz_wy_mu, pz_wy_sigma = self.decoder_z(
+                    w, torch.ones_like(w).fill_(k))
+                pz_wy = Normal(pz_wy_mu, pz_wy_sigma)
+
+                kl_z_k = py_wz.probs[:, k] * kl_divergence(qz, pz_wy).sum(1)
+                kl_z += kl_z_k.sum()
+
+        log_px_z /= num_samples
+        kl_y /= num_samples
+        kl_z /= num_samples
+        kl_w = kl_divergence(qw, pw).sum()
+        elbo = (log_px_z - kl_y - kl_z - kl_w) / x.shape[0]
+
+        return elbo
+
+    def sample(self, pi=None, num_samples=1):
+        if pi is None:
+            pi = torch.ones(self.k) / self.k
+
+        # Sample p(y).
+        py = Categorical(pi)
+        y = py.sample((num_samples,))
+
+        # Sample p(w).
+        pw = self.pw()
+        w = pw.sample((num_samples,))
+
+        # Sample p(z|w,y).
+        pz_wy_mu, pz_wy_sigma = self.decoder_z(w, y)
+        pz_wy = Normal(pz_wy_mu, pz_wy_sigma)
+        z = pz_wy.sample()
+
+        # Sample p(x|z).
+        samples = self.loglikelihood.predict(z)
+
+        return samples
