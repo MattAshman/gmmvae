@@ -1,6 +1,7 @@
 .idea/
 notebooks/samples/
 data/
+figures/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

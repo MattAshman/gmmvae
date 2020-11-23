@@ -10,11 +10,11 @@ __all__ = ['VAE', 'EntroVAE', 'GMMVAE']
 
 
 class VAE(nn.Module):
-    def __init__(self, encoder, loglikelihood, z_dim):
+    def __init__(self, loglikelihood, encoder, z_dim):
         super().__init__()
 
-        self.encoder = encoder
         self.loglikelihood = loglikelihood
+        self.encoder = encoder
         self.z_dim = z_dim
 
     def pz(self, x):
@@ -68,8 +68,8 @@ class VAE(nn.Module):
 
 
 class EntroVAE(VAE):
-    def __init__(self, encoder, loglikelihood, z_dim, init_scale=1.):
-        super().__init__(encoder, loglikelihood, z_dim)
+    def __init__(self, loglikelihood, encoder, z_dim, init_scale=1.):
+        super().__init__(loglikelihood, encoder, z_dim)
 
         self.logscale = nn.Parameter(torch.ones(z_dim) * np.log(init_scale))
 
@@ -100,13 +100,11 @@ class EntroVAE(VAE):
         return elbo
 
 
-class GMMVAE(nn.Module):
+class GMMVAE(VAE):
 
     def __init__(self, loglikelihood, encoder, z_dim, k, init_sigma=1.):
-        super().__init__()
+        super().__init__(loglikelihood, encoder, z_dim)
 
-        self.loglikelihood = loglikelihood
-        self.encoder = encoder
         self.z_dim = z_dim
         self.k = k
 
@@ -115,12 +113,6 @@ class GMMVAE(nn.Module):
                                     requires_grad=True)
         self.pz_y_logsigma = nn.Parameter(
             (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
-
-    def qz(self, x):
-        qz_mu, qz_sigma = self.encoder(x)
-        qz = Normal(qz_mu, qz_sigma)
-
-        return qz
 
     def py_z(self, z, pi):
         # Compute the marginal likelihood, p(z) = \sum_k p(z|y)p(y).
@@ -185,26 +177,59 @@ class GMMVAE(nn.Module):
 
         return samples
 
-    def predict_x(self, z):
-        x = self.loglikelihood.predict(z)
 
-        return x
+class WeightedVAE(VAE):
+    def __init__(self, loglikelihood, encoder, z_dim, k):
+        super().__init__(loglikelihood, encoder, z_dim)
 
-    def reconstruct_x(self, x):
-        z, _ = self.encoder(x)
-        x_recon = self.loglikelihood.predict(z)
+        self.k = k
 
-        return x_recon
+        # Initialise parameters of K Gaussians.
+        self.mu = nn.Parameter(torch.randn((k, z_dim)), requires_grad=True)
+        self.logsigma = nn.Parameter(torch.ones((k, z_dim)).log(),
+                                      requires_grad=True)
+
+    def pz_y(self, y):
+        # Compute the prior probability p(z|y).
+        sigma = y.matmul(self.logsigma.exp().pow(-2)).pow(-0.5)
+        mu = sigma.pow(2) * y.matmul(self.logsigma.exp().pow(-2) * self.mu)
+        pz_y = Normal(mu, sigma)
+
+        return pz_y
+
+    def elbo(self, x, y, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        pz_y = self.pz_y(y)
+        qz = self.qz(x)
+
+        kl = kl_divergence(qz, pz_y).sum()
+
+        # z_samples is shape (num_samples, batch, z_dim).
+        z_samples = qz.rsample((num_samples,))
+
+        log_px_z = 0
+        for z in z_samples:
+            log_px_z += self.loglikelihood(z, x).sum()
+
+        log_px_z /= num_samples
+        elbo = (log_px_z - kl) / x.shape[0]
+
+        return elbo
+
+    def sample(self, y, num_samples=1):
+        pz_y = self.pz_y(y)
+        z = pz_y.sample((num_samples,))
+        samples = self.loglikelihood.predict(z)
+
+        return samples
 
 
-class GMMVAEFixedCls(nn.Module):
+class GMMVAEFixedCls(VAE):
 
     def __init__(self, loglikelihood, cls, encoder, z_dim, k, init_sigma=1.):
-        super().__init__()
+        super().__init__(loglikelihood, encoder, z_dim)
 
-        self.loglikelihood = loglikelihood
         self.cls = cls
-        self.encoder = encoder
         self.z_dim = z_dim
         self.k = k
 
@@ -221,12 +246,6 @@ class GMMVAEFixedCls(nn.Module):
         qy = Categorical(cls_output.exp())
 
         return qy
-
-    def qz(self, x, y):
-        qz_mu, qz_sigma = self.encoder(x, y)
-        qz = Normal(qz_mu, qz_sigma)
-
-        return qz
 
     def elbo(self, x, cls_output=None, pi=None, num_samples=1):
         """Monte Carlo estimate of the evidence lower bound."""
@@ -262,70 +281,12 @@ class GMMVAEFixedCls(nn.Module):
         return elbo
 
 
-class GMMVAECls(nn.Module):
+class GMMVAECls(GMMVAEFixedCls):
 
     def __init__(self, loglikelihood, cls, encoder, z_dim, k, init_sigma=1.):
-        super().__init__()
+        super().__init__(loglikelihood, cls, encoder, z_dim, k, init_sigma)
 
-        self.loglikelihood = loglikelihood
-        self.cls = cls
-        self.encoder = encoder
-        self.z_dim = z_dim
-        self.k = k
         self.cls_nloglikelihood = nn.functional.nll_loss
-
-        # Initialise GMM parameters.
-        self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)) * 0.1,
-                                    requires_grad=True)
-        self.pz_y_logsigma = nn.Parameter(
-            (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
-
-    def qy(self, x, cls_output=None):
-        if cls_output is None:
-            cls_output = self.cls(x).detach()
-
-        qy = Categorical(cls_output.exp())
-
-        return qy
-
-    def qz(self, x, y):
-        qz_mu, qz_sigma = self.encoder(x, y)
-        qz = Normal(qz_mu, qz_sigma)
-
-        return qz
-
-    def elbo(self, x, cls_output=None, pi=None, num_samples=1):
-        """Monte Carlo estimate of the evidence lower bound."""
-        qy = self.qy(x, cls_output)
-        x = x.flatten(start_dim=1)
-
-        log_px_z = 0
-        for _ in range(num_samples):
-            y = qy.sample()
-            qz = self.qz(x, y)
-            z = qz.rsample()
-            log_px_z += self.loglikelihood(z, x).sum()
-
-        log_px_z /= num_samples
-
-        if pi is None:
-            pi = torch.ones(self.k) / self.k
-
-        py = Categorical(pi)
-        kl_y = kl_divergence(qy, py).sum()
-
-        kl_z = 0
-        for k in range(self.k):
-            pz_y = Normal(self.pz_y_mu[k, :],
-                          self.pz_y_logsigma[k, :].exp())
-            qz = self.qz(x, torch.ones(x.shape[0]).fill_(k))
-
-            kl_z_k = qy.probs[:, k] * kl_divergence(qz, pz_y).sum(1)
-            kl_z += kl_z_k.sum()
-
-        elbo = (log_px_z - kl_y - kl_z) / x.shape[0]
-
-        return elbo
 
     def cls_nll(self, x, y):
         output = self.cls(x)
