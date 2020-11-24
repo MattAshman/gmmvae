@@ -17,9 +17,9 @@ class VAE(nn.Module):
         self.encoder = encoder
         self.z_dim = z_dim
 
-    def pz(self, x):
-        pz_mu = torch.zeros(x.shape[0], self.z_dim)
-        pz_sigma = torch.ones(x.shape[0], self.z_dim)
+    def pz(self):
+        pz_mu = torch.zeros(self.z_dim)
+        pz_sigma = torch.ones(self.z_dim)
         pz = Normal(pz_mu, pz_sigma)
 
         return pz
@@ -32,7 +32,7 @@ class VAE(nn.Module):
 
     def elbo(self, x, num_samples=1):
         """Monte Carlo estimate of the evidence lower bound."""
-        pz = self.pz(x)
+        pz = self.pz()
         qz = self.qz(x)
 
         kl = kl_divergence(qz, pz).sum()
@@ -82,7 +82,7 @@ class EntroVAE(VAE):
 
     def elbo(self, x, h, num_samples=1):
         """Monte Carlo estimate of the evidence lower bound."""
-        pz = self.pz(x)
+        pz = self.pz()
         qz = self.qz(x, h)
 
         kl = kl_divergence(qz, pz).sum()
@@ -186,8 +186,8 @@ class WeightedVAE(VAE):
 
         # Initialise parameters of K Gaussians.
         self.mu = nn.Parameter(torch.randn((k, z_dim)), requires_grad=True)
-        self.logsigma = nn.Parameter(torch.ones((k, z_dim)).log(),
-                                      requires_grad=True)
+        self.logsigma = nn.Parameter(torch.ones(k, z_dim).log(),
+                                     requires_grad=True)
 
     def pz_y(self, y):
         # Compute the prior probability p(z|y).
@@ -401,3 +401,169 @@ class InfiniteGMMVAE(nn.Module):
         samples = self.loglikelihood.predict(z)
 
         return samples
+
+
+class HierarchicalVAE(VAE):
+    def __init__(self, loglikelihood, encoder, decoder_z, z_dim):
+        super().__init__(loglikelihood, encoder, z_dim)
+
+        self.decoder_z = decoder_z
+
+    def pz_y(self, y):
+        pz_y_mu, pz_y_sigma = self.decoder_z(y)
+        pz_y = Normal(pz_y_mu, pz_y_sigma)
+
+        return pz_y
+
+    def elbo(self, x, y, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        pz_y = self.pz_y(y)
+        qz = self.qz(x)
+
+        kl = kl_divergence(qz, pz_y).sum()
+
+        # z_samples is shape (num_samples, batch, z_dim).
+        z_samples = qz.rsample((num_samples,))
+
+        log_px_z = 0
+        for z in z_samples:
+            log_px_z += self.loglikelihood(z, x).sum()
+
+        log_px_z /= num_samples
+        elbo = (log_px_z - kl) / x.shape[0]
+
+        return elbo
+
+    def sample(self, y, num_samples=1):
+        pz_y = self.pz_y(y)
+        z = pz_y.sample((num_samples,))
+        samples = self.loglikelihood.predict(z)
+
+        return samples
+
+
+class BayesTrex(VAE):
+    def __init__(self, loglikelihood, encoder, k, init_sigma=0.1):
+        super().__init__(loglikelihood, encoder, k)
+
+        self.logsigma = nn.Parameter(torch.ones(k)*init_sigma,
+                                     requires_grad=True)
+
+    def pz_y(self, y):
+        sigma = self.logsigma.exp().unsqueeze(0).repeat(y.shape[0], 1)
+        pz_y = Normal(y, sigma)
+
+        return pz_y
+
+    def elbo(self, x, y, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        pz_y = self.pz_y(y)
+        qz = self.qz(x)
+
+        kl = kl_divergence(qz, pz_y).sum()
+
+        # z_samples is shape (num_samples, batch, z_dim).
+        z_samples = qz.rsample((num_samples,))
+
+        log_px_z = 0
+        for z in z_samples:
+            log_px_z += self.loglikelihood(z, x).sum()
+
+        log_px_z /= num_samples
+        elbo = (log_px_z - kl) / x.shape[0]
+
+        return elbo
+
+    def sample(self, y, num_samples=1):
+        pz_y = self.pz_y(y)
+        z = pz_y.sample((num_samples,)).squeeze(1)
+        samples = self.loglikelihood.predict(z)
+
+        return samples
+
+
+class ClsVAE(nn.Module):
+    def __init__(self, loglikelihood_x, loglikelihood_y, encoder_x, encoder_y,
+                 z_dim):
+        super().__init__()
+
+        self.loglikelihood_x = loglikelihood_x
+        self.loglikelihood_y = loglikelihood_y
+        self.encoder_x = encoder_x
+        self.encoder_y = encoder_y
+        self.z_dim = z_dim
+
+    def pz(self):
+        pz_mu = torch.zeros(self.z_dim)
+        pz_sigma = torch.ones(self.z_dim)
+        pz = Normal(pz_mu, pz_sigma)
+
+        return pz
+
+    def qz_x(self, x):
+        qz_x_mu, qz_x_sigma = self.encoder_x(x)
+        qz_x = Normal(qz_x_mu, qz_x_sigma)
+
+        return qz_x
+
+    def qz_y(self, y):
+        qz_y_mu, qz_y_sigma = self.encoder_y(y)
+        qz_y = Normal(qz_y_mu, qz_y_sigma)
+
+        return qz_y
+
+    def qz(self, x, y):
+        qz_x_mu, qz_x_sigma = self.encoder_x(x)
+        qz_y_mu, qz_y_sigma = self.encoder_y(y)
+
+        # Convert to natural parameters.
+        qz_x_np2 = -0.5 * qz_x_sigma.pow(-2)
+        qz_x_np1 = qz_x_mu * qz_x_sigma.pow(-2)
+        qz_y_np2 = -0.5 * qz_y_sigma.pow(-2)
+        qz_y_np1 = qz_y_mu * qz_y_sigma.pow(-2)
+
+        # Combine natural parameters and convert back.
+        qz_np1 = qz_x_np1 + qz_y_np1
+        qz_np2 = qz_x_np2 + qz_y_np2
+        qz_sigma = (-0.5 * qz_np2.pow(-1)).pow(0.5)
+        qz_mu = qz_sigma.pow(2) * qz_np1
+
+        qz = Normal(qz_mu, qz_sigma)
+
+        return qz
+
+    def elbo(self, x, y, num_samples=1):
+        """Monte Carlo estimate of the evidence lower bound."""
+        pz = self.pz()
+        qz = self.qz(x, y)
+
+        kl = kl_divergence(qz, pz).sum()
+
+        # z_samples is shape (num_samples, batch, z_dim).
+        z_samples = qz.rsample((num_samples,))
+
+        log_pxy_z = 0
+        for z in z_samples:
+            log_pxy_z += self.loglikelihood_x(z, x).sum()
+            log_pxy_z += self.loglikelihood_y(z, y).sum()
+
+        log_pxy_z /= num_samples
+        elbo = (log_pxy_z - kl) / x.shape[0]
+
+        return elbo
+
+    def sample(self, x=None, y=None, num_samples=1):
+        if x is None and y is None:
+            qz = Normal(torch.zeros(self.z_dim), torch.ones(self.z_dim))
+        elif x is None and y is not None:
+            qz = self.qz_y(y)
+        elif x is not None and y is None:
+            qz = self.qz_x(x)
+        else:
+            qz = self.qz(x, y)
+
+        z = qz.sample((num_samples,))
+        x_samples = self.loglikelihood_x.predict(z)
+        y_samples = self.loglikelihood_y.predict(z)
+
+        return x_samples, y_samples

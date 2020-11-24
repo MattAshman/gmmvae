@@ -50,6 +50,22 @@ class Bernoulli(nn.Module):
         return torch.sigmoid(f)
 
 
+class Discrete(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def loglikelihood(self, f, y):
+        log_prob = F.log_softmax(f, dim=1)
+        return -(y * log_prob).sum(dim=1)
+
+    def forward(self, f, y):
+        return -self.loglikelihood(f, y)
+
+    def predict(self, f):
+        return nn.Softmax(f)
+
+
 class NNHomoGaussian(nn.Module):
     """A fully connected neural network for parameterising a diagonal
     Gaussian distribution with homoscedastic noise.
@@ -137,6 +153,33 @@ class NNBernoulli(nn.Module):
 
         self.network = LinearNN(in_dim, out_dim, hidden_dims, nonlinearity)
         self.loglikelihood = Bernoulli()
+
+    def forward(self, z, x):
+        f = self.network(z)
+
+        return self.loglikelihood(f, x)
+
+    def predict(self, z):
+        f = self.network(z)
+
+        return self.loglikelihood.predict(f)
+
+
+class NNDiscrete(nn.Module):
+    """A fully connected neural network for parameterising a discrete
+    distribution.
+    :param in_dim (int): dimension of the input variable.
+    :param out_dim (int): dimension of the output variable.
+    :param hidden_dims (list, optional): dimensions of hidden layers.
+    :param nonlinearity (function, optional): non-linearity to apply in
+    between layers.
+    """
+    def __init__(self, in_dim, out_dim, hidden_dims=(64, 64),
+                 nonlinearity=F.relu):
+        super().__init__()
+
+        self.network = LinearNN(in_dim, out_dim, hidden_dims, nonlinearity)
+        self.loglikelihood = Discrete()
 
     def forward(self, z, x):
         f = self.network(z)
