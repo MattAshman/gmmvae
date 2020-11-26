@@ -18,7 +18,7 @@ class Categorical(Likelihood):
 
     def log_prob(self, z, y):
         log_prob = F.log_softmax(z, dim=1)
-        return -(y * log_prob).sum(dim=1)
+        return (y * log_prob).sum(dim=1)
 
 
 class NNCategorical(nn.Module):
@@ -42,7 +42,7 @@ class NNCategorical(nn.Module):
 
         return self.likelihood(f)
 
-    def log_prob(self, z):
+    def log_prob(self, z, y):
         f = self.network(z)
 
-        return self.likelihood.log_prob(f)
+        return self.likelihood.log_prob(f, y)

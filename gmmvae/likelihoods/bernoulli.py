@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.distributions import Bernoulli
 from .networks import LinearNN
 from .base import Likelihood
 
@@ -17,7 +16,7 @@ class Bernoulli(Likelihood):
         self.loglikelihood = nn.BCEWithLogitsLoss(reduction='none')
 
     def forward(self, z):
-        px = Bernoulli(torch.sigmoid(z))
+        px = torch.distributions.Bernoulli(torch.sigmoid(z))
 
         return px
 
@@ -25,7 +24,7 @@ class Bernoulli(Likelihood):
         return self.loglikelihood(z, x)
 
 
-class NNBernoulli(nn.Module):
+class NNBernoulli(Likelihood):
     """A fully connected neural network for parameterising a Bernoulli
     distribution.
     :param in_dim (int): dimension of the input variable.
@@ -41,12 +40,7 @@ class NNBernoulli(nn.Module):
         self.network = LinearNN(in_dim, out_dim, hidden_dims, nonlinearity)
         self.likelihood = Bernoulli()
 
-    def forward(self, z, x):
+    def forward(self, z):
         mu = self.network(z)
 
-        return self.likelihood(mu, x)
-
-    def predict(self, z):
-        mu = self.network(z)
-
-        return self.likelihood.log_prob(mu)
+        return self.likelihood(mu)

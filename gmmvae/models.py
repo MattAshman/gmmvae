@@ -101,7 +101,7 @@ class EntroVAE(VAE):
 class GMMVAE(VAE):
 
     def __init__(self, likelihood, variational_dist, z_dim, k,
-                 init_sigma=1.):
+                 init_sigma=1., diag=False):
         super().__init__(likelihood, variational_dist, z_dim)
 
         self.z_dim = z_dim
@@ -110,8 +110,13 @@ class GMMVAE(VAE):
         # Initialise GMM parameters.
         self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)) * 0.1,
                                     requires_grad=True)
-        self.pz_y_logsigma = nn.Parameter(
-            (torch.ones((k, z_dim)) * init_sigma).log(), requires_grad=True)
+        if diag:
+            self.pz_y_logsigma = nn.Parameter(
+                (torch.ones(k, 1) * init_sigma).log(), requires_grad=True)
+        else:
+            self.pz_y_logsigma = nn.Parameter(
+                (torch.ones((k, z_dim)) * init_sigma).log(),
+                requires_grad=True)
 
     def py_z(self, z, pi):
         # Compute the marginal likelihood, p(z) = \sum_k p(z|y)p(y).
@@ -178,10 +183,10 @@ class GMMVAE(VAE):
             z = qz.sample((num_samples,))
 
         # Sample p(x|z).
-        px_z = self.loglikelihood(z)
+        px_z = self.likelihood(z)
         x_samples = px_z.sample()
 
-        return x_samples
+        return x_samples, px_z
 
 
 class WeightedVAE(VAE):
@@ -323,8 +328,7 @@ class GMMVAECls(GMMVAEFixedCls):
 class InfiniteGMMVAE(nn.Module):
 
     def __init__(self, likelihood_x, likelihood_z, variational_dist_z,
-                 variational_dist_w, z_dim,
-                 w_dim, k):
+                 variational_dist_w, z_dim, w_dim, k):
         super().__init__()
 
         self.likelihood_x = likelihood_x
@@ -443,10 +447,38 @@ class HierarchicalVAE(VAE):
 
         return pz_y
 
+    def qz_x(self, x):
+        qz_x = self.variational_dist(x)
+
+        return qz_x
+
+    def qz(self, x, y):
+        pz_y = self.pz_y(y)
+        qz_x = self.qz_x(x)
+        pz_y_mu, pz_y_sigma = pz_y.mean, pz_y.stddev
+        qz_x_mu, qz_x_sigma = qz_x.mean, qz_x.stddev
+
+        # Convert to natural parameters.
+        pz_y_np2 = -0.5 * pz_y_sigma.pow(-2)
+        pz_y_np1 = pz_y_mu * pz_y_sigma.pow(-2)
+        qz_x_np2 = -0.5 * qz_x_sigma.pow(-2)
+        qz_x_np1 = qz_x_mu * qz_x_sigma.pow(-2)
+
+        # Combine natural parameters and convert back.
+        qz_np1 = pz_y_np1 + qz_x_np1
+        qz_np2 = pz_y_np2 + qz_x_np2
+        qz_sigma = (-0.5 * qz_np2.pow(-1)).pow(0.5)
+        qz_mu = qz_sigma.pow(2) * qz_np1
+
+        qz = Normal(qz_mu, qz_sigma)
+
+        return qz
+
+
     def elbo(self, x, y, num_samples=1):
         """Monte Carlo estimate of the evidence lower bound."""
         pz_y = self.pz_y(y)
-        qz = self.qz(x)
+        qz = self.qz(x, y)
 
         kl = kl_divergence(qz, pz_y).sum()
 
@@ -455,7 +487,7 @@ class HierarchicalVAE(VAE):
 
         log_px_z = 0
         for z in z_samples:
-            log_px_z += self.loglikelihood.log_prob(z, x).sum()
+            log_px_z += self.likelihood.log_prob(z, x).sum()
 
         log_px_z /= num_samples
         elbo = (log_px_z - kl) / x.shape[0]
@@ -465,10 +497,10 @@ class HierarchicalVAE(VAE):
     def sample(self, y, num_samples=1):
         pz_y = self.pz_y(y)
         z = pz_y.sample((num_samples,))
-        px_z = self.loglikelihood(z)
+        px_z = self.likelihood(z)
         x_samples = px_z.sample()
 
-        return x_samples
+        return x_samples, px_z
 
 
 class MultiModalVAE(nn.Module):
