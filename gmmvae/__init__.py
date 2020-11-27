@@ -1,1 +1,1 @@
-from . import classifiers, likelihoods, models, utils
+from . import templates, likelihoods, models, utils

@@ -131,7 +131,7 @@ class NNHeteroGaussian(Likelihood):
         output = self.network(z)
         mu = output[..., :self.out_dim]
         raw_sigma = output[..., self.out_dim:]
-        sigma = F.softplus(raw_sigma) + self.min_sigma
+        sigma = F.softplus(raw_sigma).clamp(min=self.min_sigma)
         px = Normal(mu, sigma)
 
         return px
@@ -166,7 +166,7 @@ class NNHeteroGaussianIndexed(Likelihood):
 
         mu = output[..., :self.out_dim]
         raw_sigma = output[..., self.out_dim:]
-        sigma = F.softplus(raw_sigma) + self.min_sigma
+        sigma = F.softplus(raw_sigma).clamp(min=self.min_sigma)
         px = Normal(mu, sigma)
 
         return px
