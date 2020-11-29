@@ -13,17 +13,25 @@ __all__ = ['HomoGaussian', 'AffineHomoGaussian', 'NNHomoGaussian',
 
 class HomoGaussian(Likelihood):
 
-    def __init__(self, dim, sigma=None, sigma_grad=True, min_sigma=1e-3):
+    def __init__(self, dim=None, sigma=None, sigma_grad=True, min_sigma=1e-3):
         super().__init__()
 
         self.min_sigma = min_sigma
 
         if sigma is None:
-            self.log_sigma = nn.Parameter(torch.zeros(dim),
-                                          requires_grad=sigma_grad)
+            if dim is None:
+                self.log_sigma = nn.Parameter(torch.tensor(0.),
+                                              requires_grad=sigma_grad)
+            else:
+                self.log_sigma = nn.Parameter(torch.zeros(dim),
+                                              requires_grad=sigma_grad)
         else:
-            self.log_sigma = nn.Parameter(torch.ones(dim) * np.log(sigma),
-                                          requires_grad=sigma_grad)
+            if dim is None:
+                self.log_sigma = nn.Parameter(torch.tensor(np.log(sigma)),
+                                              requires_grad=sigma_grad)
+            else:
+                self.log_sigma = nn.Parameter(torch.ones(dim) * np.log(sigma),
+                                              requires_grad=sigma_grad)
 
     def forward(self, z):
         sigma = self.log_sigma.exp().clamp(min=self.min_sigma)

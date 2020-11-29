@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from torch.nn import functional as F
 from torch.distributions import Normal
-from .likelihoods import Likelihood, Bernoulli
+from .likelihoods import Likelihood, Bernoulli, HomoGaussian
 
 
 class MNISTClassificationNet(nn.Module):
@@ -89,7 +89,7 @@ class CELEBAVariationalDist(Likelihood):
 
 
 class CELEBALikelihood(Likelihood):
-    def __init__(self, in_dim, hidden_dim=256, min_sigma=1e-3):
+    def __init__(self, in_dim, hidden_dim=256):
         super().__init__()
 
         # Setup the two linear transformations used.
@@ -109,7 +109,7 @@ class CELEBALikelihood(Likelihood):
         )
 
         # TODO: what's the appropriate size here?
-        self.likelihood = Bernoulli()
+        self.likelihood = HomoGaussian()
 
     def forward(self, z):
         mu = self.network(z)
@@ -118,23 +118,20 @@ class CELEBALikelihood(Likelihood):
 
 
 class CIFAR10VariationalDist(Likelihood):
-    def __init__(self, out_dim, image_size=32, n_channels=3, n_kernels=128,
-                 min_sigma=1e-3):
+    def __init__(self, out_dim, hidden_dim=256, min_sigma=1e-3):
         super().__init__()
 
         self.out_dim = out_dim
-        hidden_dim = n_kernels * ((image_size // 8) ** 2)
         self.network = nn.Sequential(
-            nn.Conv2d(n_channels, n_kernels // 4, 4, 2, 1),
-            nn.BatchNorm2d(n_kernels // 4),
+            nn.Conv2d(3, 32, 4, 2, 1),
             nn.ReLU(True),
-            nn.Conv2d(n_kernels // 4, n_kernels // 2, 4, 2, 1),
-            nn.BatchNorm2d(n_kernels // 2),
+            nn.Conv2d(32, 64, 4, 2, 1),
             nn.ReLU(True),
-            nn.Conv2d(n_kernels // 2, n_kernels, 4, 2, 1),
-            nn.BatchNorm2d(n_kernels),
+            nn.Conv2d(64, 128, 4, 2, 1),
             nn.ReLU(True),
-            View((-1, hidden_dim)),
+            nn.Conv2d(128, hidden_dim, 4, 1),
+            nn.ReLU(True),
+            View((-1, hidden_dim * 1 * 1)),
             nn.Linear(hidden_dim, out_dim * 2)
         )
 
@@ -151,28 +148,24 @@ class CIFAR10VariationalDist(Likelihood):
 
 
 class CIFAR10Likelihood(Likelihood):
-    def __init__(self, in_dim, image_size=32, n_channels=3, n_kernels=128,
-                 min_sigma=1e-3):
+    def __init__(self, in_dim, hidden_dim=256, min_sigma=1e-3):
         super().__init__()
 
-        hidden_dim = n_kernels * ((image_size // 8) ** 2)
-        feature_size = image_size // 8
         self.network = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
-            View((-1, n_kernels, feature_size, feature_size)),
-            nn.ConvTranspose2d(n_kernels, n_kernels // 2, 4, 2, 1),
-            nn.BatchNorm2d(n_kernels // 2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(n_kernels // 2, n_kernels // 4, 4, 2, 1),
-            nn.BatchNorm2d(n_kernels // 4),
-            nn.ReLU(),
-            nn.ConvTranspose2d(n_kernels // 4, n_channels, 4, 2, 1),
-            nn.BatchNorm2d(n_channels),
-            nn.ReLU()
+            View((-1, hidden_dim, 1, 1)),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(hidden_dim, 128, 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(128, 64, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(64, 32, 4, 2, 1),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(32, 3, 4, 2, 1)
         )
 
         # TODO: what's the appropriate size here?
-        self.likelihood = Bernoulli()
+        self.likelihood = HomoGaussian(min_sigma=min_sigma)
 
     def forward(self, z):
         mu = self.network(z)

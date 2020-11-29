@@ -1,7 +1,7 @@
+import torch
 import torch.nn as nn
 
 from torch.nn import functional as F
-from torch.distributions import Categorical
 from .base import Likelihood
 from .networks import LinearNN
 
@@ -14,7 +14,7 @@ class Categorical(Likelihood):
         super().__init__()
 
     def forward(self, z):
-        return Categorical(F.softmax(z, dim=1))
+        return torch.distributions.Categorical(F.softmax(z, dim=1))
 
     def log_prob(self, z, y):
         log_prob = F.log_softmax(z, dim=1)

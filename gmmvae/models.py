@@ -60,7 +60,7 @@ class VAE(nn.Module):
         px_z = self.likelihood(z)
         x_samples = px_z.sample()
 
-        return x_samples
+        return x_samples, px_z
 
 
 class EntroVAE(VAE):
@@ -108,7 +108,7 @@ class GMMVAE(VAE):
         self.k = k
 
         # Initialise GMM parameters.
-        self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)) * 0.1,
+        self.pz_y_mu = nn.Parameter(torch.randn((k, z_dim)),
                                     requires_grad=True)
         if diag:
             self.pz_y_logsigma = nn.Parameter(
@@ -557,16 +557,26 @@ class MultiModalVAE(nn.Module):
         """Monte Carlo estimate of the evidence lower bound."""
         pz = self.pz()
         qz = self.qz(x, y)
+        qz_y = self.qz_y(y)
+        qz_x = self.qz_x(x)
 
         kl = kl_divergence(qz, pz).sum()
+        kl_y = kl_divergence(qz_y, pz).sum()
+        kl_x = kl_divergence(qz_x, pz).sum()
 
         # z_samples is shape (num_samples, batch, z_dim).
         z_samples = qz.rsample((num_samples,))
+        z_y_samples = qz_y.rsample((num_samples,))
+        z_x_samples = qz_x.rsample((num_samples,))
 
         log_pxy_z = 0
-        for z in z_samples:
+        log_px_z = 0
+        log_py_z = 0
+        for z, z_y, z_x in zip(z_samples, z_y_samples, z_x_samples):
             log_pxy_z += self.likelihood_x.log_prob(z, x).sum()
             log_pxy_z += self.likelihood_y.log_prob(z, y).sum()
+            log_py_z += self.likelihood_x.log_prob(z_y, x).sum()
+            log_px_z += self.likelihood_y.log_prob(z_x, y).sum()
 
         log_pxy_z /= num_samples
         elbo = (log_pxy_z - kl) / x.shape[0]
@@ -588,4 +598,4 @@ class MultiModalVAE(nn.Module):
         py_z = self.likelihood_y(z)
         x_samples, y_samples = px_z.sample(), py_z.sample()
 
-        return x_samples, y_samples
+        return x_samples, y_samples, px_z, py_z
